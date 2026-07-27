@@ -1,40 +1,29 @@
-// ===== DEFAULT OWNERS (PASSWORD TERBARU) =====
-const defaultOwners = [
-  { username: 'ARZ', password: 'CORE V1', role: 'owner' },
-  { username: 'EPIN', password: 'CORE V2', role: 'owner' },
-  { username: 'manzz', password: 'CORE V3', role: 'owner' }
-];
+const express = require('express');
+const cors = require('cors');
+const PORT = process.env.PORT || 3000;
 
-// Saat inisialisasi database
-db.serialize(() => {
-  // ... tabel users sudah dibuat
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-  // Insert atau update default owners
-  defaultOwners.forEach(owner => {
-    db.get(`SELECT * FROM users WHERE username = ?`, [owner.username], (err, row) => {
-      if (!row) {
-        // Jika belum ada, insert baru
-        db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`,
-          [owner.username, owner.password, owner.role]);
-        console.log(`[DB] Owner ${owner.username} ditambahkan dengan password baru`);
-      } else {
-        // Jika sudah ada, update password (agar sesuai)
-        db.run(`UPDATE users SET password = ? WHERE username = ?`,
-          [owner.password, owner.username]);
-        console.log(`[DB] Password Owner ${owner.username} diperbarui`);
-      }
-    });
+// ===== ENDPOINT TEST =====
+app.get('/api/stats', (req, res) => {
+  res.json({
+    online_users: 1,
+    connections: 1,
+    expiration: 'Lifetime',
+    total_users: 3,
+    total_logs: 0
   });
-});) => {
-    if (err) return res.status(500).json({ error: err.message });
-    let csv = 'ID,Type,Target,Payload,Status,CreatedAt\n';
-    rows.forEach(row => {
-      csv += `${row.id},${row.type},${row.target},${row.payload},${row.status},${row.created_at}\n`;
-    });
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=attack_logs.csv');
-    res.send(csv);
-  });
+});
+
+app.get('/', (req, res) => {
+  res.send('🔥 OmniCore Backend Online!');
+});
+
+app.listen(PORT, () => {
+  console.log(`🔥 Server running on port ${PORT}`);
+});  });
 });
 
 // ============================================================
