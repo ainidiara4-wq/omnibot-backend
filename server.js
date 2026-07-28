@@ -31,6 +31,7 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
+  // Insert default users (dengan prepared statement yang benar)
   const stmt = db.prepare(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`);
   stmt.run('ARZ', 'CORE V1', 'owner');
   stmt.run('EPIN', 'CORE V2', 'owner');
@@ -89,12 +90,14 @@ app.delete('/api/sender/delete/:id', (req, res) => {
   });
 });
 
-// ===== ENDPOINT BUG (Simulasi) =====
+// ===== ENDPOINT BUG =====
 app.post('/api/bug/execute', (req, res) => {
   const { target, type, intensity, duration } = req.body;
   if (!target || !type) return res.status(400).json({ error: 'Target dan tipe bug wajib!' });
   db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
-    ['bug', target, `${type}:${intensity || 50}:${duration || 10}`, 'done']);
+    ['bug', target, `${type}:${intensity || 50}:${duration || 10}`, 'done'], function(err) {
+      if (err) console.error(err);
+    });
   res.json({ status: '✅ Bug terkirim!', target, type });
 });
 
@@ -160,7 +163,7 @@ app.post('/api/rat/command', (req, res) => {
   else if (command === 'shutdown') response = '> Target shutdown...';
   else if (command === 'reboot') response = '> Target reboot...';
   db.run(`INSERT INTO logs (type, target, payload, status) VALUES (?, ?, ?, ?)`,
-    ['rat', '192.168.1.100', command, 'done']);
+    ['rat', '192.168.1.100', command, 'done'], (err) => { if (err) console.error(err); });
   res.json({ status: 'ok', output: response });
 });
 
@@ -169,65 +172,6 @@ app.post('/api/users/add', (req, res) => {
   const { username, password, role } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Username dan password wajib' });
   db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, ?)`, [username, password, role || 'user'], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ status: 'ok' });
-  });
-});
-
-app.get('/api/users/list', (req, res) => {
-  db.all(`SELECT username, role FROM users`, (err, rows) => {
-    res.json(rows || []);
-  });
-});
-
-app.delete('/api/users/delete/:username', (req, res) => {
-  const username = req.params.username;
-  if (username === 'ARZ' || username === 'EPIN' || username === 'manzz') {
-    return res.status(403).json({ error: 'Tidak bisa menghapus owner utama' });
-  }
-  db.run(`DELETE FROM users WHERE username = ?`, username, function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ status: 'ok' });
-  });
-});
-
-// ===== ENDPOINT MONITOR =====
-app.get('/api/monitor/bot', (req, res) => {
-  res.json({ status: 'online', uptime: process.uptime(), total_sent: 0 });
-});
-
-app.get('/api/monitor/accounts', (req, res) => {
-  db.all(`SELECT number as phone, 'connected' as status FROM senders`, (err, rows) => {
-    res.json(rows || []);
-  });
-});
-
-app.get('/api/monitor/logs', (req, res) => {
-  db.all(`SELECT * FROM logs ORDER BY created_at DESC LIMIT 50`, (err, rows) => {
-    res.json(rows || []);
-  });
-});
-
-app.get('/api/monitor/stats', (req, res) => {
-  db.get(`SELECT COUNT(*) as total FROM logs`, (err, row) => {
-    db.get(`SELECT COUNT(*) as total_acc FROM senders`, (err2, row2) => {
-      res.json({
-        total_attacks: row ? row.total : 0,
-        total_accounts: row2 ? row2.total : 0,
-        bot_status: 'online'
-      });
-    });
-  });
-});
-
-// ===== ROOT =====
-app.get('/', (req, res) => {
-  res.send('🔥 OmniCore Backend Online!');
-});
-
-app.listen(PORT, () => {
-  console.log(`🔥 Server running on port ${PORT}`);
-}); users (username, password, role) VALUES (?, ?, ?)`, [username, password, role || 'user'], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ status: 'ok' });
   });
